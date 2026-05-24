@@ -1,0 +1,71 @@
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.10.4
+  environment:
+    - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    - AIRFLOW__CORE__FERNET_KEY=${FERNET_KEY:?Please set FERNET_KEY}
+    - AIRFLOW__CORE__LOAD_EXAMPLES=false
+    - AIRFLOW__WEBSERVER__SECRET_KEY=${WEBSERVER_SECRET_KEY:?Please set WEBSERVER_SECRET_KEY}
+    - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=true
+    - AIRFLOW_CONN_POSTGRES_ETL=${AIRFLOW_CONN_POSTGRES_ETL}
+    - PYTHONPATH=/opt/airflow # CRÍTICO: Permite que los DAGs importen módulos de la carpeta src/
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./src:/opt/airflow/src
+    - ./data:/opt/airflow/data
+  depends_on:
+    postgres:
+      condition: service_healthy
+  user: "${AIRFLOW_UID:-1000}:0"
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - DW_DB_NAME=${DW_DB_NAME}
+      - DW_USER=${DW_USER}
+      - DW_PASSWORD=${DW_PASSWORD}
+    ports:
+      - "5432:5432" # Expuesto para conectar Power BI Desktop desde Windows
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init-user-db.sh:/docker-entrypoint-initdb.d/init-user-db.sh
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash -c "airflow db migrate && airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: always
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: always
+
+volumes:
+  postgres_data:

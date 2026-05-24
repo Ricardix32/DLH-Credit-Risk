@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Environment
+.env
+
+# Directorios de Airflow (Ignoramos el contenido dinámico, no las carpetas en sí)
+logs/*
+!logs/.gitkeep
+plugins/*
+!plugins/.gitkeep
+
+# IDEs
+.vscode/
+.idea/
+
+# Datos confidenciales
+data/raw/*
+!data/raw/.gitkeep

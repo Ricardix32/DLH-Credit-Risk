@@ -7,9 +7,34 @@ CREATE SCHEMA IF NOT EXISTS bronze;
 CREATE SCHEMA IF NOT EXISTS silver;
 CREATE SCHEMA IF NOT EXISTS gold;
 
+-- =============================================
 -- BRONZE: Registro Histórico Inmutable (Append-only)
+-- =============================================
+
+-- Uso de desarrollo únicamente
+--DROP TABLE IF EXISTS bronze.raw_application CASCADE; 
+
 CREATE TABLE IF NOT EXISTS bronze.raw_application (
-    bk_id_solicitud INTEGER,
+    id_secuencial SERIAL PRIMARY KEY,         -- Clave primaria técnica para control interno
+    bk_id_solicitud VARCHAR(50),              -- Extraemos el SK_ID_CURR para búsquedas rápidas e índices
+    datos_origen_raw JSONB NOT NULL,          -- ¡Aquí se guardan las 122 columnas en formato JSON!
+    via_airflow_run_id VARCHAR(100),
+    nombre_archivo_fuente VARCHAR(100),
+    fecha_ingestion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+--índice sobre la clave de negocio para acelerar las futuras consultas hacia la capa Silver
+CREATE INDEX IF NOT EXISTS idx_bronze_raw_application_bk_id 
+ON bronze.raw_application(bk_id_solicitud);
+
+-- =============================================
+-- SILVER: Datos limpios 
+-- =============================================
+
+DROP TABLE IF EXISTS silver.cleaned_application CASCADE;
+
+CREATE TABLE silver.cleaned_application (
+    bk_id_solicitud INTEGER PRIMARY KEY, -- Requisito estricto para que funcione el UPSERT
     target SMALLINT,
     name_contract_type VARCHAR(50),
     code_gender VARCHAR(10),
@@ -20,30 +45,16 @@ CREATE TABLE IF NOT EXISTS bronze.raw_application (
     name_education_type VARCHAR(50),
     name_family_status VARCHAR(50),
     cnt_children SMALLINT,
-    via_airflow_run_id VARCHAR(100),
-    nombre_archivo_fuente VARCHAR(100),
+    credit_to_income_ratio NUMERIC(10,4), -- Enriquecimiento 1
+    annuity_income_ratio NUMERIC(10,4),   -- Enriquecimiento 2
+    via_airflow_run_id VARCHAR(100),      -- Gobernanza (Linaje)
     fecha_ingestion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- SILVER: Datos limpios (Aquí se usará UPSERT más adelante)
-CREATE TABLE IF NOT EXISTS silver.cleaned_application (
-    bk_id_solicitud INTEGER PRIMARY KEY,
-    target SMALLINT,
-    name_contract_type VARCHAR(50),
-    code_gender VARCHAR(10),
-    amt_credit NUMERIC(12,2),
-    amt_income_total NUMERIC(12,2),
-    amt_annuity NUMERIC(12,2),
-    credit_to_income_ratio NUMERIC(10,4),
-    annuity_income_ratio NUMERIC(10,4),
-    is_employed SMALLINT,
-    name_education_type VARCHAR(50),
-    name_family_status VARCHAR(50),
-    cnt_children SMALLINT,
-    fecha_ingestion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
+-- =============================================
 -- GOLD: Modelo Dimensional (Kimball)
+-- =============================================
+
 CREATE TABLE IF NOT EXISTS gold.dim_cliente (
     sk_cliente SERIAL PRIMARY KEY,
     id_cliente_origen INTEGER,

@@ -1,5 +1,6 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from datetime import datetime, timedelta
 
 # Importamos nuestra lógica de negocio aislando responsabilidades
@@ -40,6 +41,16 @@ with DAG(
         task_id='carga_masiva_a_postgres_bronze',
         python_callable=cargar_bronze_por_lotes,
     )
+    
+    tarea_transformar_silver = SQLExecuteQueryOperator(
+        task_id='transformacion_elt_a_silver',
+        conn_id='POSTGRES_ETL',
+        sql='sql/silver/transform_bronze_to_silver.sql',
+        autocommit=True
+    )
+
+    # Actualizamos el grafo de dependencias lineal
+    tarea_descargar_drive >> tarea_cargar_postgres_bronze >> tarea_transformar_silver
 
     # Grafo de dependencias (Orden de ejecución)
     tarea_descargar_drive >> tarea_cargar_postgres_bronze

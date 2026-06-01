@@ -48,9 +48,13 @@ with DAG(
         sql='sql/silver/transform_bronze_to_silver.sql',
         autocommit=True
     )
+    
+    tarea_transformar_gold = SQLExecuteQueryOperator(
+        task_id='transformacion_elt_a_gold',
+        conn_id='POSTGRES_ETL',
+        sql='sql/gold/transform_silver_to_gold.sql',
+        autocommit=True
+    )
 
-    # Actualizamos el grafo de dependencias lineal
-    tarea_descargar_drive >> tarea_cargar_postgres_bronze >> tarea_transformar_silver
-
-    # Grafo de dependencias (Orden de ejecución)
-    tarea_descargar_drive >> tarea_cargar_postgres_bronze
+    # Linaje completo
+    tarea_descargar_drive >> tarea_cargar_postgres_bronze >> tarea_transformar_silver >> tarea_transformar_gold

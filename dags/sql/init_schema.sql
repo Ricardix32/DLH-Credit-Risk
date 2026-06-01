@@ -51,39 +51,84 @@ CREATE TABLE silver.cleaned_application (
     fecha_ingestion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- =============================================
--- GOLD: Modelo Dimensional (Kimball)
--- =============================================
+-- =================================================================
+-- CAPA GOLD: Modelado Dimensional (Star Schema - Kimball)
+-- =================================================================
 
-CREATE TABLE IF NOT EXISTS gold.dim_cliente (
+-- 1. Dimensión Tiempo
+DROP TABLE IF EXISTS gold.dim_tiempo CASCADE;
+CREATE TABLE gold.dim_tiempo (
+    sk_tiempo SERIAL PRIMARY KEY,
+    fecha DATE UNIQUE,
+    anio INTEGER,
+    mes INTEGER,
+    trimestre INTEGER,
+    dia_semana INTEGER
+);
+
+-- 2. Dimensión Producto (Antes Contrato)
+DROP TABLE IF EXISTS gold.dim_producto CASCADE;
+CREATE TABLE gold.dim_producto (
+    sk_producto SERIAL PRIMARY KEY,
+    nombre_producto VARCHAR(50) UNIQUE, -- Ej. Cash loans, Revolving loans
+    via_airflow_run_id VARCHAR(100),
+    fecha_carga TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 3. Dimensión Proxy Documental (Soporte IDP)
+DROP TABLE IF EXISTS gold.dim_proxy_documental CASCADE;
+CREATE TABLE gold.dim_proxy_documental (
+    sk_proxy_documental SERIAL PRIMARY KEY,
+    tipo_documento_origen VARCHAR(50), -- Ej. Boleta Pago Física, RUC impreso
+    nivel_confianza_extraccion NUMERIC(5,2), -- % de acierto del modelo LayoutLMv3
+    flag_verificacion_manual BOOLEAN,
+    via_airflow_run_id VARCHAR(100),
+    fecha_carga TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 4. Dimensión Cliente
+DROP TABLE IF EXISTS gold.dim_cliente CASCADE;
+CREATE TABLE gold.dim_cliente (
     sk_cliente SERIAL PRIMARY KEY,
-    id_cliente_origen INTEGER,
-    genero VARCHAR(10),
-    nivel_educativo VARCHAR(50),
-    estado_civil VARCHAR(50),
-    tiene_empleo BOOLEAN,
-    num_hijos SMALLINT,
-    fecha_inicio_validez TIMESTAMP,
-    fecha_fin_validez TIMESTAMP,
-    es_registro_actual BOOLEAN
+    bk_id_solicitud INTEGER UNIQUE,
+    code_gender VARCHAR(10),
+    name_education_type VARCHAR(50),
+    name_family_status VARCHAR(50),
+    cnt_children SMALLINT,
+    via_airflow_run_id VARCHAR(100),
+    fecha_carga TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS gold.dim_estado_credito (
-    sk_estado_credito SERIAL PRIMARY KEY,
-    tipo_contrato VARCHAR(50),
-    es_moroso SMALLINT,
-    es_confiable SMALLINT
-);
-
-CREATE TABLE IF NOT EXISTS gold.fact_creditos (
-    sk_credito SERIAL PRIMARY KEY,
+-- 5. Tabla de Hechos (Fact Creditos)
+DROP TABLE IF EXISTS gold.fact_creditos CASCADE;
+CREATE TABLE gold.fact_creditos (
+    sk_fact SERIAL PRIMARY KEY,
     sk_cliente INTEGER REFERENCES gold.dim_cliente(sk_cliente),
-    sk_estado_credito INTEGER REFERENCES gold.dim_estado_credito(sk_estado_credito),
-    id_solicitud_origen VARCHAR(50),
-    monto_credito NUMERIC(12,2),
-    cuota_anual NUMERIC(12,2),
-    ingreso_total NUMERIC(12,2),
-    razon_credito_ingreso NUMERIC(10,4),
-    razon_cuota_ingreso NUMERIC(10,4),
-    fecha_ingestion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    sk_producto INTEGER REFERENCES gold.dim_producto(sk_producto),
+    sk_tiempo INTEGER REFERENCES gold.dim_tiempo(sk_tiempo),
+    sk_proxy_documental INTEGER REFERENCES gold.dim_proxy_documental(sk_proxy_documental),
+    
+    -- Métricas (Medidas)
+    amt_credit NUMERIC(12,2),
+    amt_income_total NUMERIC(12,2),
+    amt_annuity NUMERIC(12,2),
+    days_employed INTEGER,
+    
+    -- Ratios
+    credit_to_income_ratio NUMERIC(10,4),
+    annuity_income_ratio NUMERIC(10,4),
+    
+    target SMALLINT,
+    
+    via_airflow_run_id VARCHAR(100),
+    fecha_carga TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- =================================================================
+-- CREACIÓN DE ÍNDICES PARA OPTIMIZACIÓN DE LECTURA (Power BI)
+-- =================================================================
+CREATE INDEX idx_fact_cliente ON gold.fact_creditos(sk_cliente);
+CREATE INDEX idx_fact_producto ON gold.fact_creditos(sk_producto);
+CREATE INDEX idx_fact_tiempo ON gold.fact_creditos(sk_tiempo);
+CREATE INDEX idx_fact_proxy ON gold.fact_creditos(sk_proxy_documental);
+CREATE UNIQUE INDEX idx_unique_transaction ON gold.fact_creditos (sk_cliente, sk_producto, sk_tiempo);

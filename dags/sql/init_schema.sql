@@ -103,6 +103,7 @@ CREATE TABLE gold.dim_cliente (
 DROP TABLE IF EXISTS gold.fact_creditos CASCADE;
 CREATE TABLE gold.fact_creditos (
     sk_fact SERIAL PRIMARY KEY,
+    dd_id_solicitud INTEGER UNIQUE, -- NUEVO: Dimensión Degenerada (Ancla de unicidad)
     sk_cliente INTEGER REFERENCES gold.dim_cliente(sk_cliente),
     sk_producto INTEGER REFERENCES gold.dim_producto(sk_producto),
     sk_tiempo INTEGER REFERENCES gold.dim_tiempo(sk_tiempo),
@@ -131,4 +132,4 @@ CREATE INDEX idx_fact_cliente ON gold.fact_creditos(sk_cliente);
 CREATE INDEX idx_fact_producto ON gold.fact_creditos(sk_producto);
 CREATE INDEX idx_fact_tiempo ON gold.fact_creditos(sk_tiempo);
 CREATE INDEX idx_fact_proxy ON gold.fact_creditos(sk_proxy_documental);
-CREATE UNIQUE INDEX idx_unique_transaction ON gold.fact_creditos (sk_cliente, sk_producto, sk_tiempo);
+CREATE INDEX idx_composite_transaction ON gold.fact_creditos (sk_cliente, sk_producto, sk_tiempo);

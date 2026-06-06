@@ -38,6 +38,7 @@ with DAG(
         provide_context=True
     )
 
+    # Tarea 2: Cargar datos a schema bronze
     tarea_cargar_postgres_bronze = PythonOperator(
         task_id='carga_masiva_a_postgres_bronze',
         python_callable=cargar_bronze_por_lotes,

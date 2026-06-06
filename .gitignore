@@ -19,3 +19,9 @@ plugins/*
 # Datos confidenciales
 data/raw/*
 !data/raw/.gitkeep
+
+#Python virtual env y archivo para pruebas locales v1.0
+env_idp/*
+#*.jpg
+#mock_idp_engine.py
+

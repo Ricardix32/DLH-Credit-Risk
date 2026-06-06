@@ -1,9 +1,12 @@
 import pandas as pd
 import logging
 import numpy as np
+import os
+import glob # Para buscar archivos por patrones
+import json # Para leer los archivos del IDP
 from sqlalchemy import text
 from airflow.providers.postgres.hooks.postgres import PostgresHook
-from sqlalchemy.dialects.postgresql import JSONB  # CRÍTICO: Para que Pandas hable en JSONB
+from sqlalchemy.dialects.postgresql import JSONB  # Para que Pandas hable en JSONB
 
 def cargar_bronze_por_lotes(**kwargs):
     """
@@ -71,3 +74,49 @@ def cargar_bronze_por_lotes(**kwargs):
     except Exception as e:
         logging.error(f"Fallo crítico durante la carga del chunk: {e}")
         raise
+    
+    # =======================================================
+    # FASE B: CARGA INCREMENTAL IDP (Archivos JSON dinámicos)
+    # =======================================================
+    patron_busqueda = '/opt/airflow/data/raw/idp_boleta_*.json'
+    archivos_idp = glob.glob(patron_busqueda)
+    
+    if not archivos_idp:
+        logging.info("No se encontraron nuevos documentos IDP para procesar.")
+    else:
+        logging.info(f"Se detectaron {len(archivos_idp)} documentos procesados por el IDP. Iniciando ingesta...")
+        
+        for archivo in archivos_idp:
+            try:
+                # Leemos el JSON generado por tu script OCR
+                with open(archivo, 'r', encoding='utf-8') as f:
+                    payload = json.load(f)
+                
+                # Lo convertimos a un DataFrame de una sola fila para usar la misma lógica
+                df_idp = pd.DataFrame([payload])
+                
+                df_insert_idp = pd.DataFrame()
+                df_insert_idp['bk_id_solicitud'] = df_idp['SK_ID_CURR'].astype(str)
+                df_insert_idp['datos_origen_raw'] = df_idp.replace({np.nan: None}).apply(lambda row: row.to_dict(), axis=1)
+                df_insert_idp['via_airflow_run_id'] = run_id
+                df_insert_idp['nombre_archivo_fuente'] = os.path.basename(archivo) # Ej: idp_boleta_2026...json
+
+                # Hacemos el APPEND a la misma tabla Bronze
+                df_insert_idp.to_sql(
+                    name='raw_application',
+                    schema='bronze',
+                    con=engine,
+                    if_exists='append',
+                    index=False,
+                    dtype={'datos_origen_raw': JSONB}
+                )
+                logging.info(f"📄 Documento {os.path.basename(archivo)} inyectado a Bronze exitosamente.")
+                
+                # EN PRODUCCIÓN: Aquí agregaríamos `os.rename()` para mover el archivo a una carpeta de 'procesados'
+                
+            except Exception as e:
+                logging.error(f"Error procesando el documento IDP {archivo}: {e}")
+                # No lanzamos 'raise' aquí para que, si un JSON está roto, no detenga la ingesta de los demás.
+
+    logging.info("El ciclo de carga Bronze (Histórico + IDP) ha concluido.")
+    

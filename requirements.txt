@@ -1,2 +1,5 @@
 gdown
 pandas
+#Sólo si es local lo siguientes
+pytesseract
+Pillow

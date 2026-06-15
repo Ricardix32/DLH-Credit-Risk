@@ -1,0 +1,17 @@
+{
+    "SK_ID_CURR": "999999",
+    "TARGET": 0,
+    "NAME_CONTRACT_TYPE": "Cash loans",
+    "CODE_GENDER": "M",
+    "AMT_CREDIT": 15000.0,
+    "AMT_INCOME_TOTAL": 1130.63,
+    "AMT_ANNUITY": 850.0,
+    "DAYS_EMPLOYED": -1200,
+    "NAME_EDUCATION_TYPE": "Higher education",
+    "NAME_FAMILY_STATUS": "Married",
+    "CNT_CHILDREN": 1,
+    "IDP_METADATA": {
+        "document_type": "Boleta_Pago_Fisica",
+        "confidence_score": 85.5
+    }
+}

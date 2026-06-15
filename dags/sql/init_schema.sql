@@ -6,6 +6,26 @@
 CREATE SCHEMA IF NOT EXISTS bronze;
 CREATE SCHEMA IF NOT EXISTS silver;
 CREATE SCHEMA IF NOT EXISTS gold;
+CREATE SCHEMA IF NOT EXISTS audit;
+
+-- =================================================================
+-- ESQUEMA DE AUDITORÍA Y CONTROL (DataOps)
+-- =================================================================
+
+DROP TABLE IF EXISTS audit.etl_log CASCADE;
+CREATE TABLE audit.etl_log (
+    log_id SERIAL PRIMARY KEY,
+    via_airflow_run_id VARCHAR(100) NOT NULL,
+    nombre_tarea VARCHAR(100) NOT NULL,
+    capa_destino VARCHAR(50),
+    filas_procesadas INTEGER,
+    estado_ejecucion VARCHAR(20),
+    mensaje_detalle TEXT,
+    fecha_ejecucion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Índice para búsquedas rápidas de auditoría por ejecución
+CREATE INDEX idx_audit_run_id ON audit.etl_log(via_airflow_run_id);
 
 -- =============================================
 -- BRONZE: Registro Histórico Inmutable (Append-only)
@@ -34,7 +54,7 @@ ON bronze.raw_application(bk_id_solicitud);
 DROP TABLE IF EXISTS silver.cleaned_application CASCADE;
 
 CREATE TABLE silver.cleaned_application (
-    bk_id_solicitud INTEGER PRIMARY KEY, -- Requisito estricto para que funcione el UPSERT
+    bk_id_solicitud INTEGER PRIMARY KEY, -- Requisito estricto para UPSERT
     target SMALLINT,
     name_contract_type VARCHAR(50),
     code_gender VARCHAR(10),
@@ -45,9 +65,17 @@ CREATE TABLE silver.cleaned_application (
     name_education_type VARCHAR(50),
     name_family_status VARCHAR(50),
     cnt_children SMALLINT,
-    credit_to_income_ratio NUMERIC(10,4), -- Enriquecimiento 1
-    annuity_income_ratio NUMERIC(10,4),   -- Enriquecimiento 2
-    via_airflow_run_id VARCHAR(100),      -- Gobernanza (Linaje)
+    edad_anios NUMERIC(5,1),
+    antiguedad_laboral_anios NUMERIC(5,1),
+    sector_economico VARCHAR(100),
+    calificacion_region_ciudad SMALLINT,
+    flag_discrepancia_ciudad SMALLINT,
+    anios_residencia NUMERIC(5,1),
+
+    -- RATIOS ENRIQUECIDOS
+    credit_to_income_ratio NUMERIC(10,4),
+    annuity_income_ratio NUMERIC(10,4),
+    via_airflow_run_id VARCHAR(100), -- Gobernanza (Linaje)
     fecha_ingestion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -95,6 +123,13 @@ CREATE TABLE gold.dim_cliente (
     name_education_type VARCHAR(50),
     name_family_status VARCHAR(50),
     cnt_children SMALLINT,
+    edad_anios NUMERIC(5,1),
+    antiguedad_laboral_anios NUMERIC(5,1),
+    sector_economico VARCHAR(100),
+    calificacion_region_ciudad SMALLINT,
+    flag_discrepancia_ciudad SMALLINT,
+    anios_residencia NUMERIC(5,1),
+    
     via_airflow_run_id VARCHAR(100),
     fecha_carga TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

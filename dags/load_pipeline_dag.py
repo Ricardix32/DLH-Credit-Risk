@@ -1,12 +1,13 @@
 from airflow import DAG
+import os
 from airflow.operators.python import PythonOperator
 from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from airflow.providers.common.sql.operators.sql import SQLCheckOperator
-from datetime import datetime, timedelta
-
+from src.etl.extract.mock_idp_engine import procesar_lote_documentos
 # Importamos nuestra lógica de negocio aislando responsabilidades
-from src.etl.extract.drive_ingestion import download_kaggle_dataset
+from src.etl.extract.drive_ingestion import download_dataset_dinamico
 from src.etl.load.bronze_loader import cargar_bronze_por_lotes
+from datetime import datetime, timedelta
 
 # Diccionario de argumentos por defecto para las tareas
 default_args = {
@@ -30,20 +31,34 @@ with DAG(
 ) as dag:
 
     #TAREAS del DAG
-
-    # Tarea 1: Verificar y Descargar
-    tarea_descargar_drive = PythonOperator(
-        task_id='verificar_y_descargar_dataset',
-        python_callable=download_kaggle_dataset,
-        provide_context=True
+    
+    #Tarea 1 (Paralelo): Ejecutar motor OCR y verifica o descargar dataset 
+    #======================================================================
+    #Tarea a: Ejecutar el motor OCR/IDP aislando dependencias
+    tarea_ejecutar_idp = PythonOperator(
+        task_id='procesar_imagenes_landing_zone',
+        python_callable=procesar_lote_documentos,
     )
 
+
+    # Tarea b: Verificar y Descargar
+    tarea_descargar_application_train = PythonOperator(
+        task_id='descargar_application_train',
+        python_callable=download_dataset_dinamico,
+        templates_dict={
+            'file_name': 'application_train.csv',
+            'drive_id': os.getenv("DRIVE_FILE_ID") 
+        }
+    )
+    #======================================================================
+    
     # Tarea 2: Cargar datos a schema bronze
     tarea_cargar_postgres_bronze = PythonOperator(
         task_id='carga_masiva_a_postgres_bronze',
         python_callable=cargar_bronze_por_lotes,
     )
     
+    # Tarea 3: Cargar datos limpios a schema silver (Feature Store)
     tarea_transformar_silver = SQLExecuteQueryOperator(
         task_id='transformacion_elt_a_silver',
         conn_id='POSTGRES_ETL',
@@ -51,9 +66,7 @@ with DAG(
         autocommit=True
     )
     
-    # ==========================================================
-    # DATA QUALITY CHECKS (Capa Silver)
-    # ==========================================================
+    # Tarea 4: Data Quality Checks de Silver
     tarea_verificar_calidad_silver = SQLCheckOperator(
         task_id='dq_check_silver_to_gold',
         conn_id='POSTGRES_ETL',
@@ -71,6 +84,7 @@ with DAG(
         """
     )
     
+    # Tarea 5: Cargar datos al DWH en schema gold 
     tarea_transformar_gold = SQLExecuteQueryOperator(
         task_id='transformacion_elt_a_gold',
         conn_id='POSTGRES_ETL',
@@ -79,4 +93,4 @@ with DAG(
     )
 
     # Linaje completo
-    tarea_descargar_drive >> tarea_cargar_postgres_bronze >> tarea_transformar_silver >> tarea_verificar_calidad_silver >> tarea_transformar_gold
+    [tarea_ejecutar_idp, tarea_descargar_application_train] >> tarea_cargar_postgres_bronze >> tarea_transformar_silver >> tarea_verificar_calidad_silver >> tarea_transformar_gold

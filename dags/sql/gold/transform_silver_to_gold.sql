@@ -11,18 +11,39 @@ ON CONFLICT (nombre_producto) DO NOTHING;
 
 -- 2. Poblar Dimensión Cliente
 INSERT INTO gold.dim_cliente (
-    bk_id_solicitud, code_gender, name_education_type, 
-    name_family_status, cnt_children, via_airflow_run_id
+    bk_id_solicitud, code_gender, name_education_type,
+    name_family_status, cnt_children, 
+    
+    -- Nuevas variables inyectadas
+    edad_anios, antiguedad_laboral_anios, sector_economico,
+    calificacion_region_ciudad, flag_discrepancia_ciudad, anios_residencia,
+    
+    via_airflow_run_id
 )
-SELECT DISTINCT 
-    bk_id_solicitud, code_gender, name_education_type, 
-    name_family_status, cnt_children, '{{ run_id }}'
+SELECT DISTINCT
+    bk_id_solicitud, code_gender, name_education_type,
+    name_family_status, cnt_children, 
+    
+    -- Mapeo directo desde Silver
+    edad_anios, antiguedad_laboral_anios, sector_economico,
+    calificacion_region_ciudad, flag_discrepancia_ciudad, anios_residencia,
+    
+    '{{ run_id }}'
 FROM silver.cleaned_application
 ON CONFLICT (bk_id_solicitud) DO UPDATE SET
     code_gender = EXCLUDED.code_gender,
     name_education_type = EXCLUDED.name_education_type,
     name_family_status = EXCLUDED.name_family_status,
     cnt_children = EXCLUDED.cnt_children,
+    
+    -- Actualización idempotente de las nuevas variables
+    edad_anios = EXCLUDED.edad_anios,
+    antiguedad_laboral_anios = EXCLUDED.antiguedad_laboral_anios,
+    sector_economico = EXCLUDED.sector_economico,
+    calificacion_region_ciudad = EXCLUDED.calificacion_region_ciudad,
+    flag_discrepancia_ciudad = EXCLUDED.flag_discrepancia_ciudad,
+    anios_residencia = EXCLUDED.anios_residencia,
+    
     via_airflow_run_id = EXCLUDED.via_airflow_run_id,
     fecha_carga = CURRENT_TIMESTAMP;
 
@@ -90,3 +111,24 @@ ON CONFLICT (dd_id_solicitud) DO UPDATE SET
     target = EXCLUDED.target,
     via_airflow_run_id = EXCLUDED.via_airflow_run_id,
     fecha_carga = CURRENT_TIMESTAMP;
+
+
+-- =================================================================
+-- REGISTRO DE AUDITORÍA Y LINAJE
+-- =================================================================
+INSERT INTO audit.etl_log (
+    via_airflow_run_id, 
+    nombre_tarea, 
+    capa_destino, 
+    filas_procesadas, 
+    estado_ejecucion,
+    mensaje_detalle
+)
+SELECT 
+    '{{ run_id }}',                                  -- Airflow inyecta este valor dinámicamente
+    'transformacion_elt_a_silver',
+    'silver.cleaned_application',
+    (SELECT COUNT(*) FROM silver.cleaned_application WHERE via_airflow_run_id = '{{ run_id }}'), -- Conteo dinámico
+    'EXITO',
+    'Fusión de datos históricos Kaggle y métricas IDP completada exitosamente'
+;

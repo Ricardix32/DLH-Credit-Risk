@@ -2,32 +2,42 @@ import os
 import gdown
 import logging
 
-def download_kaggle_dataset(**kwargs):
-    """
-    Descarga el dataset de Kaggle desde un enlace público de Google Drive
-    hacia la capa inmutable (Bronze) local.
-    """
-    # Ruta absoluta mapeada en nuestro volumen de Docker
-    destination_path = '/opt/airflow/data/raw/application_train.csv'
-    
-    # IMPORTANTE: Reemplaza 'TU_FILE_ID_AQUI' con el ID real de tu enlace de Drive
-    # Ejemplo: Si tu link es https://drive.google.com/file/d/1aBcD2eFgH/view, el ID es 1aBcD2eFgH
-    file_id = 'TU_FILE_ID_AQUI' 
-    url = f'https://drive.google.com/uc?id=1ZXwmCfeONnTCDtsNw4CMk3ks4oLk9N18'
+# Variables Globales (Asegúrate de que coincidan con bronze_loader.py)
+RAW_DIR = '/opt/airflow/data/raw/'
+ARCHIVE_DIR = '/opt/airflow/data/archive/'
 
-    # Control de Idempotencia: Verificar si el archivo ya existe
-    if os.path.exists(destination_path):
-        logging.info(f"✅ El archivo ya existe en {destination_path}.")
-        logging.info("Saltando descarga para ahorrar ancho de banda y evitar duplicidad.")
-        return "Archivo en caché"
+def download_dataset_dinamico(**kwargs):
+    """
+    Descarga un dataset específico de Google Drive a la carpeta RAW.
+    Verifica primero si ya fue descargado o procesado (Archive).
+    """
+    # Obtenemos los parámetros dinámicos que le pasaremos desde el DAG
+    nombre_archivo = kwargs.get('templates_dict').get('file_name')
+    file_id = kwargs.get('templates_dict').get('drive_id')
     
-    logging.info("Iniciando descarga desde Google Drive...")
+    destino_raw = os.path.join(RAW_DIR, nombre_archivo)
+    destino_archive = os.path.join(ARCHIVE_DIR, nombre_archivo)
     
-    # Descargar usando gdown
+    # 1. VERIFICACIÓN DOBLE (Idempotencia)
+    if os.path.exists(destino_raw):
+        logging.info(f"✅ El archivo {nombre_archivo} ya está listo en RAW para procesar.")
+        return "Caché en RAW"
+        
+    if os.path.exists(destino_archive):
+        logging.info(f"✅ El archivo {nombre_archivo} ya fue procesado históricamente y reside en ARCHIVE.")
+        # Si ya está en Archive, el nodo de carga a Bronze simplemente lo ignorará.
+        return "Caché en ARCHIVE (Procesado)"
+
+    # 2. DESCARGA (Solo si no existe en ningún lado)
+    url = f"https://drive.google.com/uc?id={file_id}"
+    logging.info(f"Iniciando descarga de {nombre_archivo} desde Google Drive...")
+    
     try:
-        gdown.download(url, destination_path, quiet=False)
-        logging.info("🚀 Descarga completada con éxito.")
+        # Crea la carpeta raw si por algún motivo no existe
+        os.makedirs(RAW_DIR, exist_ok=True)
+        gdown.download(url, destino_raw, quiet=False)
+        logging.info(f"🚀 Descarga de {nombre_archivo} completada con éxito.")
         return "Descarga exitosa"
     except Exception as e:
-        logging.error(f"Error durante la descarga: {e}")
+        logging.error(f"Error durante la descarga de {nombre_archivo}: {e}")
         raise

@@ -1,107 +1,118 @@
-import pandas as pd
-import logging
-import numpy as np
 import os
-import glob # Para buscar archivos por patrones
-import json # Para leer los archivos del IDP
+import shutil
+import logging
+import glob
+import json
+import pandas as pd
+import numpy as np
 from sqlalchemy import text
 from airflow.providers.postgres.hooks.postgres import PostgresHook
-from sqlalchemy.dialects.postgresql import JSONB  # Para que Pandas hable en JSONB
+from sqlalchemy.dialects.postgresql import JSONB
+
+# =================================================================
+# CONFIGURACIONES GLOBALES (DRY Principle)
+# =================================================================
+RAW_DIR = '/opt/airflow/data/raw/'
+ARCHIVE_DIR = '/opt/airflow/data/archive/'
+
+# =================================================================
+# FUNCIONES AUXILIARES (Helpers)
+# =================================================================
+def mover_archivo_a_historico(ruta_archivo, carpeta_destino):
+    """
+    Mueve un archivo procesado a la zona de Cold Storage (Archive).
+    Evita conflictos de metadatos en volúmenes Docker/WSL2.
+    """
+    try:
+        os.makedirs(carpeta_destino, exist_ok=True)
+        destino_final = os.path.join(carpeta_destino, os.path.basename(ruta_archivo))
+        
+        # Enfoque defensivo: copyfile + remove no arrastra metadatos restrictivos
+        shutil.copyfile(ruta_archivo, destino_final)
+        os.remove(ruta_archivo)
+        
+        logging.info(f"📁 Archivo encapsulado y movido a: {destino_final}")
+        return True
+    except Exception as e:
+        logging.error(f"❌ Error al mover el archivo {ruta_archivo}: {e}")
+        return False
+    
+# =================================================================
+# FUNCION PARA CARGAR FILES EN CAPA BRONZE
+# =================================================================
 
 def cargar_bronze_por_lotes(**kwargs):
     """
     Lee el dataset de Kaggle por chunks, filtra columnas operacionales,
     inyecta metadatos de auditoría y carga masivamente a PostgreSQL.
     """
-    # 1. EXTRACCIÓN DEL RUN_ID DINÁMICO
-    # kwargs contiene todo el contexto de Airflow para esta ejecución exacta
+    
     run_id = kwargs.get('run_id', 'id_no_encontrado')
     logging.info(f"Iniciando carga a Bronze (Arquitectura JSONB). Run ID: {run_id}")
 
-    # 2. CONEXIÓN SEGURA A POSTGRESQL
     hook = PostgresHook(postgres_conn_id='POSTGRES_ETL')
     engine = hook.get_sqlalchemy_engine()
     
-    # Truncar la tabla para garantizar idempotencia (Evita duplicados en recargas)
-    with engine.begin() as connection:
-        connection.execute(text("TRUNCATE TABLE bronze.raw_application;"))
-        print("Tabla Bronze limpiada exitosamente. Iniciando inserción de chunks...")
+    # =======================================================
+    # FASE A: CARGA HISTÓRICA (CSV de Kaggle)
+    # =======================================================
+    ruta_csv = os.path.join(RAW_DIR, 'application_train.csv')
     
-    file_path = '/opt/airflow/data/raw/application_train.csv'
-    chunk_size = 10000 # Procesar de a 10,000 registros
+    if os.path.exists(ruta_csv):
+        chunk_size = 10000 
+        try:
+            iterador_csv = pd.read_csv(ruta_csv, chunksize=chunk_size, dtype={'SK_ID_CURR': str})
+            
+            for i, chunk in enumerate(iterador_csv):
+                df_insert = pd.DataFrame()
+                df_insert['bk_id_solicitud'] = chunk['SK_ID_CURR']
+                df_insert['datos_origen_raw'] = chunk.replace({np.nan: None}).apply(lambda row: row.to_dict(), axis=1)
+                df_insert['via_airflow_run_id'] = run_id
+                df_insert['nombre_archivo_fuente'] = 'application_train.csv'
 
-    try:
-        # 2. LECTURA COMPLETA (Sin filtrar usecols)
-        # Forzamos SK_ID_CURR a string para que empate con el VARCHAR(50) de tu tabla
-        iterador_csv = pd.read_csv(file_path, chunksize=chunk_size, dtype={'SK_ID_CURR': str})
-        
-        for i, chunk in enumerate(iterador_csv):
-            # 3. CONSTRUCCIÓN DEL DATAFRAME DE INSERCIÓN
-            df_insert = pd.DataFrame()
+                df_insert.to_sql(
+                    name='raw_application',
+                    schema='bronze',
+                    con=engine,
+                    if_exists='append',
+                    index=False,
+                    method='multi',
+                    dtype={'datos_origen_raw': JSONB}
+                )
+                logging.info(f"✅ Lote {i + 1} procesado e insertado ({len(chunk)} filas).")
+                
+            # CORRECCIÓN: Usamos ruta_csv en lugar de archivo
+            logging.info(f"Toda la data cruda del 📄 Documento {os.path.basename(ruta_csv)} ha sido alojada exitosamente.")
             
-            # Extraemos la llave de negocio para las búsquedas rápidas (índice)
-            df_insert['bk_id_solicitud'] = chunk['SK_ID_CURR']
-            
-            # 4. SERIALIZACIÓN JSON EXTREMADAMENTE RÁPIDA
-            # Convertimos cada fila del DataFrame a un diccionario nativo de Python.
-            # Al pasarle diccionarios en lugar de strings, SQLAlchemy los convierte a JSON puro en Postgres sin dobles comillas y reemplaza
-            # los NaN por None para ser aceptado por JSON (Lo lee como null).
-            df_insert['datos_origen_raw'] = chunk.replace({np.nan: None}).apply(lambda row: row.to_dict(), axis=1)
-            
-            # 5. INYECCIÓN DE GOBIERNO DE DATOS
-            df_insert['via_airflow_run_id'] = run_id
-            df_insert['nombre_archivo_fuente'] = 'application_train.csv'
-
-            # 6. CARGA MASIVA CON TIPADO FUERTE
-            # Si no especificamos dtype={'datos_origen_raw': JSONB}, 
-            # SQLAlchemy lo enviará como texto plano (TEXT) y Postgres rechazará la inserción.
-            df_insert.to_sql(
-                name='raw_application',
-                schema='bronze',
-                con=engine,
-                if_exists='append',
-                index=False,
-                method='multi',
-                dtype={
-                    'datos_origen_raw': JSONB
-                }
-            )
-            
-            logging.info(f"✅ Lote {i + 1} procesado e insertado ({len(chunk)} filas).")
-            
-        logging.info("Toda la data cruda ha sido alojada exitosamente en formato JSONB.")
-        
-    except Exception as e:
-        logging.error(f"Fallo crítico durante la carga del chunk: {e}")
-        raise
+        except Exception as e:
+            logging.error(f"Fallo crítico durante la carga histórica (CSV): {e}")
+            raise
+    else:
+        logging.warning("⚠️ No se encontró el CSV histórico. Se omite esta fase.")
     
     # =======================================================
     # FASE B: CARGA INCREMENTAL IDP (Archivos JSON dinámicos)
     # =======================================================
-    patron_busqueda = '/opt/airflow/data/raw/idp_boleta_*.json'
-    archivos_idp = glob.glob(patron_busqueda)
+    patron_json_path = os.path.join(RAW_DIR, 'idp_boleta_*.json')
+    idp_files = glob.glob(patron_json_path)
     
-    if not archivos_idp:
+    if not idp_files:
         logging.info("No se encontraron nuevos documentos IDP para procesar.")
     else:
-        logging.info(f"Se detectaron {len(archivos_idp)} documentos procesados por el IDP. Iniciando ingesta...")
+        logging.info(f"Se detectaron {len(idp_files)} documentos procesados por el IDP. Iniciando ingesta...")
         
-        for archivo in archivos_idp:
+        for archivo in idp_files:
             try:
-                # Leemos el JSON generado por tu script OCR
                 with open(archivo, 'r', encoding='utf-8') as f:
                     payload = json.load(f)
                 
-                # Lo convertimos a un DataFrame de una sola fila para usar la misma lógica
                 df_idp = pd.DataFrame([payload])
-                
                 df_insert_idp = pd.DataFrame()
                 df_insert_idp['bk_id_solicitud'] = df_idp['SK_ID_CURR'].astype(str)
                 df_insert_idp['datos_origen_raw'] = df_idp.replace({np.nan: None}).apply(lambda row: row.to_dict(), axis=1)
                 df_insert_idp['via_airflow_run_id'] = run_id
-                df_insert_idp['nombre_archivo_fuente'] = os.path.basename(archivo) # Ej: idp_boleta_2026...json
+                df_insert_idp['nombre_archivo_fuente'] = os.path.basename(archivo)
 
-                # Hacemos el APPEND a la misma tabla Bronze
                 df_insert_idp.to_sql(
                     name='raw_application',
                     schema='bronze',
@@ -112,11 +123,10 @@ def cargar_bronze_por_lotes(**kwargs):
                 )
                 logging.info(f"📄 Documento {os.path.basename(archivo)} inyectado a Bronze exitosamente.")
                 
-                # EN PRODUCCIÓN: Aquí agregaríamos `os.rename()` para mover el archivo a una carpeta de 'procesados'
+                # CORRECCIÓN DRY: Usamos tu función auxiliar para mover el archivo
+                mover_archivo_a_historico(archivo, ARCHIVE_DIR)
                 
             except Exception as e:
                 logging.error(f"Error procesando el documento IDP {archivo}: {e}")
-                # No lanzamos 'raise' aquí para que, si un JSON está roto, no detenga la ingesta de los demás.
 
-    logging.info("El ciclo de carga Bronze (Histórico + IDP) ha concluido.")
-    
+    logging.info("El ciclo de carga Bronze ha concluido.")

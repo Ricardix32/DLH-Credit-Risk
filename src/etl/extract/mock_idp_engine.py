@@ -1,4 +1,6 @@
 import pytesseract
+import glob
+import shutil
 from PIL import Image
 import re
 import json
@@ -76,14 +78,52 @@ def guardar_en_raw(payload, directorio_destino):
         
     print(f"[4] JSON estructurado guardado en: {ruta_json}")
     print("[5] Listo para ser consumido por Apache Airflow -> Capa Bronze.")
-
-if __name__ == "__main__":
-    # Necesitas guardar una imagen de prueba (boleta.jpg) en tu proyecto
-    ruta_prueba = "boleta_prueba.jpg" 
-    ruta_output = "data/raw/" # Tu carpeta en WSL2
     
-    if os.path.exists(ruta_prueba):
-        datos = extraer_datos_boleta(ruta_prueba)
-        guardar_en_raw(datos, ruta_output)
-    else:
-        print(f"Por favor, coloca una imagen llamada '{ruta_prueba}' en esta carpeta para hacer la prueba.")
+    pass
+
+def procesar_lote_documentos(**kwargs):
+    """
+    Función orquestadora: Escanea la Landing Zone, procesa imágenes con OCR,
+    guarda el JSON en RAW y archiva la imagen física.
+    """
+    landing_zone = "/opt/airflow/data/landing/boletas/"
+    raw_zone = "/opt/airflow/data/raw/"
+    archive_zone = "/opt/airflow/data/archive/boletas_procesadas/"
+    
+    os.makedirs(landing_zone, exist_ok=True)
+    os.makedirs(raw_zone, exist_ok=True)
+    os.makedirs(archive_zone, exist_ok=True)
+
+    patron_imagenes = os.path.join(landing_zone, '*.jpg') # O *.pdf, *.png
+    imagenes_a_procesar = glob.glob(patron_imagenes)
+
+    if not imagenes_a_procesar:
+        print("📁 Bandeja limpia. No hay nuevas boletas físicas en la Landing Zone.")
+        return "Sin documentos nuevos"
+
+    print(f"🚀 Iniciando procesamiento por lotes: {len(imagenes_a_procesar)} documentos detectados.")
+    
+    for ruta_imagen in imagenes_a_procesar:
+        print(f"\n---> Procesando: {os.path.basename(ruta_imagen)}")
+        
+        datos = extraer_datos_boleta(ruta_imagen)
+        
+        if datos:
+            guardar_en_raw(datos, raw_zone)
+            destino_archivo = os.path.join(archive_zone, os.path.basename(ruta_imagen))
+            shutil.move(ruta_imagen, destino_archivo)
+            print(f"✅ Documento procesado y movido a histórico: {destino_archivo}")
+        else:
+            print(f"❌ Fallo en la extracción de: {ruta_imagen}")
+
+    return f"Se procesaron {len(imagenes_a_procesar)} documentos"
+
+
+# =====================================================================
+# 3. BLOQUE DE PRUEBAS LOCALES (Opcional pero recomendado)
+# =====================================================================
+# Si ejecutas "python mock_idp_engine.py" en tu terminal, entrará aquí.
+# Si Airflow importa el archivo, ignorará esto.
+if __name__ == "__main__":
+    print("Iniciando prueba local del motor IDP fuera de Airflow...")
+    procesar_lote_documentos()

@@ -37,6 +37,7 @@ def mover_archivo_a_historico(ruta_archivo, carpeta_destino):
         logging.error(f"❌ Error al mover el archivo {ruta_archivo}: {e}")
         return False
     
+    
 # =================================================================
 # FUNCION PARA CARGAR FILES EN CAPA BRONZE
 # =================================================================
@@ -84,11 +85,15 @@ def cargar_bronze_por_lotes(**kwargs):
             # CORRECCIÓN: Usamos ruta_csv en lugar de archivo
             logging.info(f"Toda la data cruda del 📄 Documento {os.path.basename(ruta_csv)} ha sido alojada exitosamente.")
             
+            mover_archivo_a_historico(ruta_csv, ARCHIVE_DIR)
+            
         except Exception as e:
             logging.error(f"Fallo crítico durante la carga histórica (CSV): {e}")
             raise
     else:
         logging.warning("⚠️ No se encontró el CSV histórico. Se omite esta fase.")
+        
+    
     
     # =======================================================
     # FASE B: CARGA INCREMENTAL IDP (Archivos JSON dinámicos)

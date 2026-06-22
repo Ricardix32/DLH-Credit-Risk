@@ -7,7 +7,7 @@ import json
 import os
 from datetime import datetime
 
-def extraer_datos_boleta(ruta_imagen):
+def extraer_datos_boleta(ruta_imagen, id_solicitud):
     print(f"[1] Iniciando Motor IDP (Tesseract OCR)...")
     
     # 1. LOS OJOS: Extracción de texto crudo de la imagen
@@ -45,7 +45,7 @@ def extraer_datos_boleta(ruta_imagen):
     # 3. GENERACIÓN DEL PAYLOAD (JSON)
     # Simulamos que este cliente es el ID '999999' para que Airflow lo inyecte a Bronze
     payload_idp = {
-        "SK_ID_CURR": "999999", 
+        "SK_ID_CURR": str(id_solicitud), 
         "TARGET": 0,
         "NAME_CONTRACT_TYPE": "Cash loans",
         "CODE_GENDER": "M",
@@ -104,9 +104,20 @@ def procesar_lote_documentos(**kwargs):
     print(f"🚀 Iniciando procesamiento por lotes: {len(imagenes_a_procesar)} documentos detectados.")
     
     for ruta_imagen in imagenes_a_procesar:
-        print(f"\n---> Procesando: {os.path.basename(ruta_imagen)}")
+        nombre_archivo = os.path.basename(ruta_imagen)
+        print(f"\n---> Procesando: {nombre_archivo}")
         
-        datos = extraer_datos_boleta(ruta_imagen)
+        # Extraer el ID (asumiendo formato "100002_boleta.jpg")
+        try:
+            id_solicitud = nombre_archivo.split('_')[0]
+            if not id_solicitud.isdigit():
+                raise ValueError("El prefijo no es numérico")
+        except Exception:
+            print(f"⚠️ Archivo ignorado. Sin ID de solicitud en el nombre: {nombre_archivo}")
+            continue # Salta este archivo y sigue con el siguiente
+        
+        # Pasamos el ID a la función extractora
+        datos = extraer_datos_boleta(ruta_imagen, id_solicitud)
         
         if datos:
             guardar_en_raw(datos, raw_zone)

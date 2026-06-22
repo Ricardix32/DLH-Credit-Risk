@@ -18,7 +18,9 @@ plugins/*
 
 # Datos confidenciales
 data/raw/*
+data/archive/*
 !data/raw/.gitkeep
+!data/archive/.gitkeep
 
 #Python virtual env y archivo para pruebas locales v1.0
 env_idp/*
